@@ -16,13 +16,13 @@ const mongoUrl = `mongodb+srv://${process.env.MONGODB_USER}:${process.env.MONGOD
 let userCollection;
 
 async function connectDB() {
-  const client = new MongoClient(mongoUrl);
+  const client = new MongoClient(mongoUrl, { tls: true, tlsAllowInvalidCertificates: false });
   await client.connect();
   const db = client.db(process.env.MONGODB_DATABASE);
   userCollection = db.collection('users');
   console.log('Connected to MongoDB');
 }
-connectDB().catch(console.error);
+
 
 app.use(express.urlencoded({ extended: false }));
 app.use(express.static('public'));
@@ -34,7 +34,6 @@ app.use(session({
   store: MongoStore.create({
     mongoUrl: mongoUrl,
     collectionName: 'sessions',
-    crypto: { secret: process.env.MONGODB_SESSION_SECRET },
   }),
   cookie: { maxAge: 60 * 60 * 1000 }, // 1 hour
 }));
@@ -82,7 +81,7 @@ app.get('/signup', (req, res) => {
     <body>
       <h2>create user</h2>
       <form action="/signupSubmit" method="POST">
-        <input name="name" type="text" placeholder="name" required /><br><br>
+        <input name="name" type="text" placeholder="name" /><br><br>
         <input name="email" type="text" placeholder="email" /><br><br>
         <input name="password" type="password" placeholder="password" /><br><br>
         <button type="submit">Submit</button>
@@ -96,7 +95,6 @@ app.get('/signup', (req, res) => {
 app.post('/signupSubmit', async (req, res) => {
   const { name, email, password } = req.body;
 
-  // Basic presence checks
   if (!name) {
     return res.send(`Name is required. <a href="/signup">Try again</a>`);
   }
@@ -120,7 +118,6 @@ app.post('/signupSubmit', async (req, res) => {
   }
 
   const hashedPassword = await bcrypt.hash(password, saltRounds);
-
   await userCollection.insertOne({ name, email, password: hashedPassword });
 
   req.session.authenticated = true;
@@ -152,7 +149,7 @@ app.get('/login', (req, res) => {
 app.post('/loginSubmit', async (req, res) => {
   const { email, password } = req.body;
 
-  // Joi validation
+  // Joi validation (NoSQL injection protection)
   const schema = Joi.object({
     email: Joi.string().email({ tlds: { allow: false } }).max(100).required(),
     password: Joi.string().max(50).required(),
@@ -222,6 +219,13 @@ app.get('*', (req, res) => {
   `);
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+connectDB()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error('Failed to connect to MongoDB:', err);
+    process.exit(1);
+  });
