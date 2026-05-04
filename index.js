@@ -14,38 +14,22 @@ const saltRounds = 12;
 const mongoUrl = `mongodb+srv://${process.env.MONGODB_USER}:${process.env.MONGODB_PASSWORD}@${process.env.MONGODB_HOST}/${process.env.MONGODB_DATABASE}?retryWrites=true&w=majority`;
 
 let userCollection;
+let mongoClient;
 
 async function connectDB() {
-  const client = new MongoClient(mongoUrl, { tls: true, tlsAllowInvalidCertificates: false });
-  await client.connect();
-  const db = client.db(process.env.MONGODB_DATABASE);
+  mongoClient = new MongoClient(mongoUrl, { tls: true, tlsAllowInvalidCertificates: false });
+  await mongoClient.connect();
+  const db = mongoClient.db(process.env.MONGODB_DATABASE);
   userCollection = db.collection('users');
   console.log('Connected to MongoDB');
 }
 
-
 app.use(express.urlencoded({ extended: false }));
 app.use(express.static('public'));
 
-app.use(session({
-  secret: process.env.NODE_SESSION_SECRET,
-  resave: false,
-  saveUninitialized: false,
-  store: MongoStore.create({
-    mongoUrl: mongoUrl,
-    collectionName: 'sessions',
-  }),
-  cookie: { maxAge: 60 * 60 * 1000 }, // 1 hour
-}));
-
-function isLoggedIn(req) {
-  return req.session && req.session.authenticated;
-}
-
-
 // Home page
 app.get('/', (req, res) => {
-  if (isLoggedIn(req)) {
+  if (req.session && req.session.authenticated) {
     res.send(`
       <!DOCTYPE html>
       <html>
@@ -95,15 +79,9 @@ app.get('/signup', (req, res) => {
 app.post('/signupSubmit', async (req, res) => {
   const { name, email, password } = req.body;
 
-  if (!name) {
-    return res.send(`Name is required. <a href="/signup">Try again</a>`);
-  }
-  if (!email) {
-    return res.send(`Email is required. <a href="/signup">Try again</a>`);
-  }
-  if (!password) {
-    return res.send(`Password is required. <a href="/signup">Try again</a>`);
-  }
+  if (!name) return res.send(`Name is required. <a href="/signup">Try again</a>`);
+  if (!email) return res.send(`Email is required. <a href="/signup">Try again</a>`);
+  if (!password) return res.send(`Password is required. <a href="/signup">Try again</a>`);
 
   // Joi validation (NoSQL injection protection)
   const schema = Joi.object({
@@ -124,7 +102,13 @@ app.post('/signupSubmit', async (req, res) => {
   req.session.name = name;
   req.session.email = email;
 
-  res.redirect('/members');
+  req.session.save((err) => {
+    if (err) {
+      console.error('Session save error:', err);
+      return res.send('Session error. Please try again.');
+    }
+    res.redirect('/members');
+  });
 });
 
 // Login – GET
@@ -161,7 +145,6 @@ app.post('/loginSubmit', async (req, res) => {
   }
 
   const user = await userCollection.findOne({ email });
-
   if (!user) {
     return res.send(`Invalid email/password combination. <a href="/login">Try again</a>`);
   }
@@ -175,12 +158,18 @@ app.post('/loginSubmit', async (req, res) => {
   req.session.name = user.name;
   req.session.email = user.email;
 
-  res.redirect('/members');
+  req.session.save((err) => {
+    if (err) {
+      console.error('Session save error:', err);
+      return res.send('Session error. Please try again.');
+    }
+    res.redirect('/members');
+  });
 });
 
 // Members – GET
 app.get('/members', (req, res) => {
-  if (!isLoggedIn(req)) {
+  if (!req.session || !req.session.authenticated) {
     return res.redirect('/');
   }
 
@@ -221,6 +210,20 @@ app.get('*', (req, res) => {
 
 connectDB()
   .then(() => {
+    // Session middleware uses the already-connected mongoClient
+    app.use(session({
+      secret: process.env.NODE_SESSION_SECRET,
+      resave: true,
+      saveUninitialized: false,
+      store: MongoStore.create({
+        client: mongoClient,
+        dbName: process.env.MONGODB_DATABASE,
+        collectionName: 'sessions',
+        ttl: 60 * 60, // 1 hour
+      }),
+      cookie: { maxAge: 60 * 60 * 1000 }, // 1 hour
+    }));
+
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });
