@@ -10,226 +10,228 @@ const { MongoClient } = require('mongodb');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const saltRounds = 12;
-const mongoUrl = `mongodb+srv://${process.env.MONGODB_USER}:${process.env.MONGODB_PASSWORD}@${process.env.MONGODB_HOST}/${process.env.MONGODB_DATABASE}?retryWrites=true&w=majority`;
 
-let userCollection;
-let mongoClient;
+// MongoDB setup
+const mongoUrl = `mongodb+srv://${process.env.MONGODB_USER}:${process.env.MONGODB_PASSWORD}@${process.env.MONGODB_HOST}/?retryWrites=true&w=majority`;
 
-async function startServer() {
-  // 1. Connect to MongoDB first
-  mongoClient = new MongoClient(mongoUrl, { tls: true, tlsAllowInvalidCertificates: false });
-  await mongoClient.connect();
-  const db = mongoClient.db(process.env.MONGODB_DATABASE);
-  userCollection = db.collection('users');
-  console.log('Connected to MongoDB');
+const client = new MongoClient(mongoUrl, {
+    tls: true,
+    tlsAllowInvalidCertificates: false
+});
 
-  // 2. Set up middleware AFTER connection is ready
-  app.use(express.urlencoded({ extended: false }));
-  app.use(express.static('public'));
+const userCollection = client.db(process.env.MONGODB_DATABASE).collection('users');
 
-  app.use(session({
+// Session store
+const mongoStore = MongoStore.create({
+    mongoUrl: mongoUrl,
+    collectionName: 'sessions',
+    ttl: 60 * 60 // 1 hour
+});
+
+// Middleware
+app.set('view engine', 'ejs');
+app.use(express.urlencoded({ extended: false }));
+app.use(express.static('public'));
+
+app.use(session({
     secret: process.env.NODE_SESSION_SECRET,
-    resave: true,
+    store: mongoStore,
     saveUninitialized: false,
-    store: MongoStore.create({
-      client: mongoClient,
-      dbName: process.env.MONGODB_DATABASE,
-      collectionName: 'sessions',
-      ttl: 60 * 60, // 1 hour
-    }),
-    cookie: { maxAge: 60 * 60 * 1000 }, // 1 hour
-  }));
+    resave: true,
+    cookie: { maxAge: 60 * 60 * 1000 } // 1 hour
+}));
 
-  // 3. Define routes AFTER middleware
-  
-  // Home page
-  app.get('/', (req, res) => {
-    if (req.session && req.session.authenticated) {
-      res.send(`
-        <!DOCTYPE html>
-        <html>
-        <head><title>Home</title></head>
-        <body>
-          <h1>Hello, ${req.session.name}!</h1>
-          <a href="/members"><button>Go to Members Area</button></a><br><br>
-          <a href="/logout"><button>Logout</button></a>
-        </body>
-        </html>
-      `);
-    } else {
-      res.send(`
-        <!DOCTYPE html>
-        <html>
-        <head><title>Home</title></head>
-        <body>
-          <h1>Welcome</h1>
-          <a href="/signup"><button>Sign up</button></a><br><br>
-          <a href="/login"><button>Log in</button></a>
-        </body>
-        </html>
-      `);
+// ── Authentication middleware ────────────────────────────────────────────────
+function sessionValidation(req, res, next) {
+    if (!req.session.authenticated) {
+        res.redirect('/login');
+        return;
     }
-  });
+    next();
+}
 
-  // Sign up – GET
-  app.get('/signup', (req, res) => {
-    res.send(`
-      <!DOCTYPE html>
-      <html>
-      <head><title>Sign Up</title></head>
-      <body>
-        <h2>create user</h2>
-        <form action="/signupSubmit" method="POST">
-          <input name="name" type="text" placeholder="name" /><br><br>
-          <input name="email" type="text" placeholder="email" /><br><br>
-          <input name="password" type="password" placeholder="password" /><br><br>
-          <button type="submit">Submit</button>
-        </form>
-      </body>
-      </html>
-    `);
-  });
+// ── Authorization middleware ─────────────────────────────────────────────────
+function adminAuthorization(req, res, next) {
+    if (req.session.user_type != 'admin') {
+        res.status(403);
+        res.render('403');
+        return;
+    }
+    next();
+}
 
-  // Sign up – POST
-  app.post('/signupSubmit', async (req, res) => {
-    const { name, email, password } = req.body;
+// ── Routes ───────────────────────────────────────────────────────────────────
 
-    if (!name) return res.send(`Name is required. <a href="/signup">Try again</a>`);
-    if (!email) return res.send(`Email is required. <a href="/signup">Try again</a>`);
-    if (!password) return res.send(`Password is required. <a href="/signup">Try again</a>`);
+// Home page
+app.get('/', (req, res) => {
+    res.render('index', {
+        loggedIn: req.session.authenticated ? true : false,
+        name: req.session.name || ''
+    });
+});
+
+// Sign up - GET
+app.get('/signup', (req, res) => {
+    res.render('signup');
+});
+
+// Sign up - POST
+app.post('/signupSubmit', async (req, res) => {
+    var name = req.body.name;
+    var email = req.body.email;
+    var password = req.body.password;
+
+    if (!name) {
+        res.send('Name is required. <a href="/signup">Try again</a>');
+        return;
+    }
+    if (!email) {
+        res.send('Email is required. <a href="/signup">Try again</a>');
+        return;
+    }
+    if (!password) {
+        res.send('Password is required. <a href="/signup">Try again</a>');
+        return;
+    }
 
     // Joi validation (NoSQL injection protection)
     const schema = Joi.object({
-      name: Joi.string().max(50).required(),
-      email: Joi.string().email({ tlds: { allow: false } }).max(100).required(),
-      password: Joi.string().max(50).required(),
+        name: Joi.string().alphanum().max(20).required(),
+        email: Joi.string().email({ tlds: { allow: false } }).required(),
+        password: Joi.string().max(20).required()
     });
 
-    const { error } = schema.validate({ name, email, password });
-    if (error) {
-      return res.send(`Invalid input: ${error.details[0].message}. <a href="/signup">Try again</a>`);
+    const validationResult = schema.validate({ name, email, password });
+    if (validationResult.error != null) {
+        console.log(validationResult.error);
+        res.send(`Invalid input. <a href="/signup">Try again</a>`);
+        return;
     }
 
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
-    await userCollection.insertOne({ name, email, password: hashedPassword });
+    var hashedPassword = await bcrypt.hash(password, saltRounds);
+
+    await userCollection.insertOne({
+        name: name,
+        email: email,
+        password: hashedPassword,
+        user_type: 'user'
+    });
 
     req.session.authenticated = true;
     req.session.name = name;
     req.session.email = email;
+    req.session.user_type = 'user';
 
-    req.session.save((err) => {
-      if (err) {
-        console.error('Session save error:', err);
-        return res.send('Session error. Please try again.');
-      }
-      res.redirect('/members');
-    });
-  });
+    res.redirect('/members');
+});
 
-  // Login – GET
-  app.get('/login', (req, res) => {
-    res.send(`
-      <!DOCTYPE html>
-      <html>
-      <head><title>Log In</title></head>
-      <body>
-        <h2>log in</h2>
-        <form action="/loginSubmit" method="POST">
-          <input name="email" type="text" placeholder="email" /><br><br>
-          <input name="password" type="password" placeholder="password" /><br><br>
-          <button type="submit">Submit</button>
-        </form>
-      </body>
-      </html>
-    `);
-  });
+// Login - GET
+app.get('/login', (req, res) => {
+    res.render('login');
+});
 
-  // Login – POST
-  app.post('/loginSubmit', async (req, res) => {
-    const { email, password } = req.body;
+// Login - POST
+app.post('/loginSubmit', async (req, res) => {
+    var email = req.body.email;
+    var password = req.body.password;
 
     // Joi validation (NoSQL injection protection)
     const schema = Joi.object({
-      email: Joi.string().email({ tlds: { allow: false } }).max(100).required(),
-      password: Joi.string().max(50).required(),
+        email: Joi.string().email({ tlds: { allow: false } }).required(),
+        password: Joi.string().max(20).required()
     });
 
-    const { error } = schema.validate({ email, password });
-    if (error) {
-      return res.send(`Invalid input. <a href="/login">Try again</a>`);
+    const validationResult = schema.validate({ email, password });
+    if (validationResult.error != null) {
+        console.log(validationResult.error);
+        res.send(`Invalid input. <a href="/login">Try again</a>`);
+        return;
     }
 
-    const user = await userCollection.findOne({ email });
-    if (!user) {
-      return res.send(`Invalid email/password combination. <a href="/login">Try again</a>`);
+    const result = await userCollection
+        .find({ email: email })
+        .project({ name: 1, email: 1, password: 1, user_type: 1, _id: 1 })
+        .toArray();
+
+    if (result.length != 1) {
+        res.send('User not found. <a href="/login">Try again</a>');
+        return;
     }
 
-    const passwordMatch = await bcrypt.compare(password, user.password);
-    if (!passwordMatch) {
-      return res.send(`Invalid email/password combination. <a href="/login">Try again</a>`);
+    if (await bcrypt.compare(password, result[0].password)) {
+        req.session.authenticated = true;
+        req.session.name = result[0].name;
+        req.session.email = result[0].email;
+        req.session.user_type = result[0].user_type;
+        res.redirect('/members');
+        return;
+    } else {
+        res.send('Invalid email/password combination. <a href="/login">Try again</a>');
+        return;
     }
+});
 
-    req.session.authenticated = true;
-    req.session.name = user.name;
-    req.session.email = user.email;
-
-    req.session.save((err) => {
-      if (err) {
-        console.error('Session save error:', err);
-        return res.send('Session error. Please try again.');
-      }
-      res.redirect('/members');
-    });
-  });
-
-  // Members – GET
-  app.get('/members', (req, res) => {
-    if (!req.session || !req.session.authenticated) {
-      return res.redirect('/');
-    }
-
+// Members - GET (authentication required)
+app.get('/members', sessionValidation, (req, res) => {
     const images = ['img1.jpg', 'img2.jpg', 'img3.jpg'];
-    const randomImage = images[Math.floor(Math.random() * images.length)];
+    res.render('members', {
+        name: req.session.name,
+        images: images
+    });
+});
 
-    res.send(`
-      <!DOCTYPE html>
-      <html>
-      <head><title>Members</title></head>
-      <body>
-        <h1>Hello, ${req.session.name}.</h1>
-        <img src="/${randomImage}" alt="random image" style="max-width:400px;" /><br><br>
-        <a href="/logout"><button>Sign out</button></a>
-      </body>
-      </html>
-    `);
-  });
+// Admin - GET (authentication + authorization required)
+app.get('/admin', sessionValidation, adminAuthorization, async (req, res) => {
+    const users = await userCollection.find().project({ name: 1, email: 1, user_type: 1 }).toArray();
+    res.render('admin', { users: users });
+});
 
-  // Logout
-  app.get('/logout', (req, res) => {
+// Promote user to admin
+app.get('/promoteUser', sessionValidation, adminAuthorization, async (req, res) => {
+    // Joi validation on URL parameter
+    const schema = Joi.string().email({ tlds: { allow: false } }).required();
+    const validationResult = schema.validate(req.query.email);
+    if (validationResult.error != null) {
+        res.send('Invalid input.');
+        return;
+    }
+
+    await userCollection.updateOne(
+        { email: req.query.email },
+        { $set: { user_type: 'admin' } }
+    );
+    res.redirect('/admin');
+});
+
+// Demote user to regular user
+app.get('/demoteUser', sessionValidation, adminAuthorization, async (req, res) => {
+    // Joi validation on URL parameter
+    const schema = Joi.string().email({ tlds: { allow: false } }).required();
+    const validationResult = schema.validate(req.query.email);
+    if (validationResult.error != null) {
+        res.send('Invalid input.');
+        return;
+    }
+
+    await userCollection.updateOne(
+        { email: req.query.email },
+        { $set: { user_type: 'user' } }
+    );
+    res.redirect('/admin');
+});
+
+// Logout
+app.get('/logout', (req, res) => {
     req.session.destroy();
     res.redirect('/');
-  });
+});
 
-  // 404 – catch-all
-  app.get('*', (req, res) => {
-    res.status(404).send(`
-      <!DOCTYPE html>
-      <html>
-      <head><title>404</title></head>
-      <body>
-        <h1>Page not found - 404</h1>
-      </body>
-      </html>
-    `);
-  });
+// 404 - catch-all
+app.get('*', (req, res) => {
+    res.status(404);
+    res.render('404');
+});
 
-  // 4. Start listening
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-  });
-}
-
-startServer().catch((err) => {
-  console.error('Failed to start server:', err);
-  process.exit(1);
+app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
 });

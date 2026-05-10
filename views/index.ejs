@@ -1,0 +1,18 @@
+<%- include('templates/header') %>
+
+<% if (loggedIn) { %>
+    <div class="text-center mt-5">
+        <h1>Hello, <%= name %>!</h1>
+        <a href="/members" class="btn btn-primary mt-3 me-2">Go to Members Area</a>
+        <a href="/logout" class="btn btn-secondary mt-3">Logout</a>
+    </div>
+<% } else { %>
+    <div class="text-center mt-5">
+        <h1>Welcome</h1>
+        <p class="lead">Please sign up or log in to continue.</p>
+        <a href="/signup" class="btn btn-primary mt-3 me-2">Sign Up</a>
+        <a href="/login" class="btn btn-outline-primary mt-3">Log In</a>
+    </div>
+<% } %>
+
+<%- include('templates/footer') %>

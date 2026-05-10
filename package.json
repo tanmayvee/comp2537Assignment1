@@ -1,7 +1,7 @@
 {
-  "name": "comp2537-assignment1",
+  "name": "comp2537-assignment2",
   "version": "1.0.0",
-  "description": "COMP 2537 Assignment 1 - Node.js website with MongoDB sessions",
+  "description": "COMP 2537 Assignment 2",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -10,9 +10,10 @@
     "bcrypt": "^5.1.1",
     "connect-mongo": "^5.1.0",
     "dotenv": "^16.4.5",
+    "ejs": "^3.1.10",
     "express": "^4.19.2",
     "express-session": "^1.18.0",
     "joi": "^17.13.1",
-    "mongodb": "^6.21.0"
+    "mongodb": "^6.7.0"
   }
 }
