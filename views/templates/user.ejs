@@ -1,7 +1,7 @@
 <tr>
     <td><%= user.name %></td>
     <td><%= user.email %></td>
-    <td><span class="badge <%= user.user_type === 'admin' ? 'bg-danger' : 'bg-secondary' %>"><%= user.user_type %></span></td>
+    <td><span class="badge"><%= user.user_type %></span></td>
     <td>
         <a href="/promoteUser?email=<%= user.email %>" class="btn btn-sm btn-success me-1">Promote to Admin</a>
         <a href="/demoteUser?email=<%= user.email %>" class="btn btn-sm btn-warning">Demote to User</a>

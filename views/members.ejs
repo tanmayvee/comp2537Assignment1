@@ -1,15 +1,16 @@
 <%- include('templates/header') %>
 
 <h1 class="mb-4">Hello, <%= name %>.</h1>
+<hr style="border-color:#c9ab20;">
 
 <div class="row">
     <% for (let i = 0; i < images.length; i++) { %>
     <div class="col-12 col-md-4 mb-3">
-        <img src="/<%= images[i] %>" class="img-fluid rounded" alt="member image">
+        <img src="/<%= images[i] %>" class="img-fluid rounded shadow-sm" alt="member image">
     </div>
     <% } %>
 </div>
 
-<a href="/logout" class="btn btn-secondary mt-3">Sign Out</a>
+<a href="/logout" class="btn btn-outline-secondary mt-3">Sign Out</a>
 
 <%- include('templates/footer') %>
